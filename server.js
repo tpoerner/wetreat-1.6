@@ -1,4 +1,3 @@
-// server.js
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -33,18 +32,25 @@ async function initDb() {
   await db.exec(`
     CREATE TABLE IF NOT EXISTS patients (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+      -- Demographics (patient)
       fullName TEXT,
       email TEXT,
       dob TEXT,
       patientId TEXT,
+
+      -- Medical History (patient)
       symptoms TEXT,
       medicalHistory TEXT,
       notes TEXT,
-      documentsUrls TEXT,
+      documentsUrls TEXT,  -- comma-separated
+
+      -- Consultation (admin only)
       physicianName TEXT,
       physicianEmail TEXT,
       consultationDate TEXT,
       recommendations TEXT,
+
       createdAt TEXT
     )
   `);
@@ -56,6 +62,7 @@ function adminOnly(req, res, next) {
   return res.status(401).json({ error: 'Unauthorized' });
 }
 
+/* ---------- Public: Intake ---------- */
 app.post('/api/intake', async (req, res) => {
   try {
     const {
@@ -78,6 +85,7 @@ app.post('/api/intake', async (req, res) => {
   }
 });
 
+/* ---------- Admin: list/search/sort ---------- */
 app.get('/api/patients', adminOnly, async (req, res) => {
   try {
     const { search = '', sort = 'createdAt', dir = 'DESC' } = req.query;
@@ -98,6 +106,7 @@ app.get('/api/patients', adminOnly, async (req, res) => {
   }
 });
 
+/* ---------- Admin: update Consultation ---------- */
 app.put('/api/patients/:id/consultation', adminOnly, async (req, res) => {
   try {
     const { id } = req.params;
@@ -114,6 +123,7 @@ app.put('/api/patients/:id/consultation', adminOnly, async (req, res) => {
   }
 });
 
+/* ---------- Admin: delete ---------- */
 app.delete('/api/patients/:id', adminOnly, async (req, res) => {
   try {
     const { id } = req.params;
@@ -126,6 +136,7 @@ app.delete('/api/patients/:id', adminOnly, async (req, res) => {
   }
 });
 
+/* ---------- Admin: PDF report ---------- */
 app.get('/api/patients/:id/report', adminOnly, async (req, res) => {
   try {
     const { id } = req.params;
@@ -178,9 +189,14 @@ app.get('/api/patients/:id/report', adminOnly, async (req, res) => {
   }
 });
 
+/* ---------- Health ---------- */
 app.get('/api/health', (_req, res) => res.json({ ok: true, dbPath }));
 
+/* ---------- Static frontend ---------- */
 app.use(express.static(path.join(__dirname, 'frontend', 'dist')));
 app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'frontend', 'dist', 'index.html')));
 
-initDb().then(() => app.listen(PORT, () => console.log(`✅ Server on ${PORT}; DB at ${dbPath}`))).catch(err => { console.error('DB init failed:', err); process.exit(1); });
+/* ---------- Start ---------- */
+initDb()
+  .then(() => app.listen(PORT, () => console.log(`✅ Server on ${PORT}; DB at ${dbPath}`)))
+  .catch(err => { console.error('DB init failed:', err); process.exit(1); });
