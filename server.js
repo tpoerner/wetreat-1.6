@@ -1,3 +1,4 @@
+// server.js
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -11,17 +12,21 @@ import SVGtoPDF from 'svg-to-pdfkit';
 
 dotenv.config();
 
+// --- ES module dirname ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// --- App & config ---
 const app = express();
-app.use(cors());
-app.use(express.json());
-
 const PORT = process.env.PORT || 10000;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme';
 
-// DB in /tmp for Render Hobby
+app.use(cors());
+app.use(express.json());
+
+// =====================
+// Database (Render Hobby-friendly: /tmp)
+// =====================
 const dbDir = '/tmp/sqlite';
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 const dbPath = path.join(dbDir, 'patients.sqlite');
@@ -48,69 +53,88 @@ async function initDb() {
       -- Consultation (admin only)
       physicianName TEXT,
       physicianEmail TEXT,
-      consultationDate TEXT,
+      consultationDate TEXT,  -- YYYY-MM-DD
       recommendations TEXT,
 
-      createdAt TEXT
+      createdAt TEXT           -- ISO timestamp
     )
   `);
 }
 
+// =====================
+// Auth helper (simple header)
+// =====================
 function adminOnly(req, res, next) {
   const pass = req.headers['x-admin-password'];
   if (pass && pass === ADMIN_PASSWORD) return next();
   return res.status(401).json({ error: 'Unauthorized' });
 }
 
-/* ---------- Public: Intake ---------- */
+// =====================
+// Public: Patient Intake
+// =====================
 app.post('/api/intake', async (req, res) => {
   try {
     const {
       fullName = '', email = '', dob = '', patientId = '',
       symptoms = '', medicalHistory = '', notes = '',
-      documentsUrls = ''
+      documentsUrls = ''       // comma-separated URLs
     } = req.body || {};
+
     const createdAt = new Date().toISOString();
+
     await db.run(
       `INSERT INTO patients
        (fullName,email,dob,patientId,symptoms,medicalHistory,notes,documentsUrls,
         physicianName,physicianEmail,consultationDate,recommendations,createdAt)
        VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,NULL,?)`,
-      [fullName,email,dob,patientId,symptoms,medicalHistory,notes,documentsUrls,createdAt]
+      [fullName, email, dob, patientId, symptoms, medicalHistory, notes, documentsUrls, createdAt]
     );
+
     res.json({ success: true });
   } catch (e) {
-    console.error('POST /api/intake error', e);
-    res.status(500).json({ success: false });
+    console.error('POST /api/intake error:', e);
+    res.status(500).json({ success: false, message: 'Failed to save intake' });
   }
 });
 
-/* ---------- Admin: list/search/sort ---------- */
+// =====================
+// Admin: list/search/sort
+// =====================
 app.get('/api/patients', adminOnly, async (req, res) => {
   try {
     const { search = '', sort = 'createdAt', dir = 'DESC' } = req.query;
     const safeSort = ['id','createdAt','fullName','patientId','dob','email'].includes(sort) ? sort : 'createdAt';
     const safeDir  = (dir || '').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
     const like = `%${search}%`;
+
     const rows = await db.all(
       `SELECT * FROM patients
        WHERE fullName LIKE ? OR email LIKE ? OR patientId LIKE ? OR symptoms LIKE ? OR medicalHistory LIKE ?
           OR notes LIKE ? OR documentsUrls LIKE ? OR physicianName LIKE ? OR physicianEmail LIKE ? OR recommendations LIKE ?
        ORDER BY ${safeSort} ${safeDir}`,
-      [like,like,like,like,like,like,like,like,like,like]
+      [like, like, like, like, like, like, like, like, like, like]
     );
     res.json(rows);
   } catch (e) {
-    console.error('GET /api/patients error', e);
+    console.error('GET /api/patients error:', e);
     res.status(500).json({ success: false });
   }
 });
 
-/* ---------- Admin: update Consultation ---------- */
+// =====================
+// Admin: update Consultation section only
+// =====================
 app.put('/api/patients/:id/consultation', adminOnly, async (req, res) => {
   try {
     const { id } = req.params;
-    const { physicianName = '', physicianEmail = '', consultationDate = '', recommendations = '' } = req.body || {};
+    const {
+      physicianName = '',
+      physicianEmail = '',
+      consultationDate = '',
+      recommendations = ''
+    } = req.body || {};
+
     const r = await db.run(
       `UPDATE patients SET physicianName=?, physicianEmail=?, consultationDate=?, recommendations=? WHERE id=?`,
       [physicianName, physicianEmail, consultationDate, recommendations, id]
@@ -118,12 +142,14 @@ app.put('/api/patients/:id/consultation', adminOnly, async (req, res) => {
     if (r.changes === 0) return res.status(404).json({ success: false, message: 'Not found' });
     res.json({ success: true });
   } catch (e) {
-    console.error('PUT /api/patients/:id/consultation error', e);
+    console.error('PUT /api/patients/:id/consultation error:', e);
     res.status(500).json({ success: false });
   }
 });
 
-/* ---------- Admin: delete ---------- */
+// =====================
+// Admin: delete record
+// =====================
 app.delete('/api/patients/:id', adminOnly, async (req, res) => {
   try {
     const { id } = req.params;
@@ -131,12 +157,14 @@ app.delete('/api/patients/:id', adminOnly, async (req, res) => {
     if (r.changes === 0) return res.status(404).json({ success: false, message: 'Not found' });
     res.json({ success: true });
   } catch (e) {
-    console.error('DELETE /api/patients/:id error', e);
+    console.error('DELETE /api/patients/:id error:', e);
     res.status(500).json({ success: false });
   }
 });
 
-/* ---------- Admin: PDF report ---------- */
+// =====================
+// Admin: PDF Report (A4 portrait) with WeTreat SRL header + SVG logo
+// =====================
 app.get('/api/patients/:id/report', adminOnly, async (req, res) => {
   try {
     const { id } = req.params;
@@ -146,57 +174,96 @@ app.get('/api/patients/:id/report', adminOnly, async (req, res) => {
     const logoPath = path.join(__dirname, 'assets', 'logo.svg');
     const svg = fs.existsSync(logoPath) ? fs.readFileSync(logoPath, 'utf8') : null;
 
-    const doc = new PDFDocument({ size: 'A4', margins: { top: 50, left: 50, right: 50, bottom: 50 } });
+    const doc = new PDFDocument({
+      size: 'A4',
+      margins: { top: 50, left: 50, right: 50, bottom: 50 }
+    });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=patient_${id}_report.pdf`);
     doc.pipe(res);
 
+    // Header with logo + title
     if (svg) SVGtoPDF(doc, svg, 50, 30, { width: 80, assumePt: true });
     doc.fontSize(18).text('WeTreat SRL', 140, 40);
     doc.moveTo(50, 90).lineTo(545, 90).stroke();
 
-    const section = (t) => { doc.moveDown(1); doc.fontSize(13).text(t, { underline: true }); doc.moveDown(0.5); doc.fontSize(11); };
-    const field = (k, v) => { doc.font('Helvetica-Bold').text(k + ': ', { continued: true }); doc.font('Helvetica').text(v || '—'); };
+    const section = (title) => {
+      doc.moveDown(1);
+      doc.fontSize(13).text(title, { underline: true });
+      doc.moveDown(0.5);
+      doc.fontSize(11);
+    };
+    const field = (label, value) => {
+      doc.font('Helvetica-Bold').text(`${label}: `, { continued: true });
+      doc.font('Helvetica').text(value || '—');
+    };
 
-    section("Patient’s Demographics");
-    field("Full Name", row.fullName);
-    field("Email", row.email);
-    field("Date of Birth", row.dob);
-    field("Patient ID", row.patientId);
-    field("Created At", new Date(row.createdAt).toLocaleString());
+    // Section 1 – Demographics
+    section('Patient’s Demographics');
+    field('Full Name', row.fullName);
+    field('Email', row.email);
+    field('Date of Birth', row.dob);
+    field('Patient ID', row.patientId);
+    field('Created At', new Date(row.createdAt).toLocaleString());
 
-    section("Medical History");
-    field("Symptoms", row.symptoms);
-    field("Medical History", row.medicalHistory);
-    field("Notes", row.notes);
-    doc.font('Helvetica-Bold').text("Medical Documents and Imaging URLs:");
-    const urls = (row.documentsUrls || '').split(',').map(s=>s.trim()).filter(Boolean);
-    if (urls.length) { doc.font('Helvetica'); urls.forEach(u=>doc.text('• ' + u)); } else { doc.font('Helvetica').text('—'); }
+    // Section 2 – Medical History
+    section('Medical History');
+    field('Symptoms', row.symptoms);
+    field('Medical History', row.medicalHistory);
+    field('Notes', row.notes);
+    doc.font('Helvetica-Bold').text('Medical Documents and Imaging URLs:');
+    const urls = (row.documentsUrls || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (urls.length) {
+      doc.font('Helvetica');
+      urls.forEach(u => doc.text('• ' + u));
+    } else {
+      doc.font('Helvetica').text('—');
+    }
 
-    section("Consultation");
-    field("Physician’s Name", row.physicianName);
-    field("Physician’s Email", row.physicianEmail);
-    field("Consultation Date", row.consultationDate);
-    field("Recommendations", row.recommendations);
+    // Section 3 – Consultation (admin)
+    section('Consultation');
+    field('Physician’s Name', row.physicianName);
+    field('Physician’s Email', row.physicianEmail);
+    field('Consultation Date', row.consultationDate);
+    field('Recommendations', row.recommendations);
 
+    // Signature line
     doc.moveDown(2);
     doc.text('Physician Signature: ________________________________');
 
     doc.end();
   } catch (e) {
-    console.error('GET /api/patients/:id/report error', e);
+    console.error('GET /api/patients/:id/report error:', e);
     res.status(500).send('Failed to generate report');
   }
 });
 
-/* ---------- Health ---------- */
+// =====================
+// Health check
+// =====================
 app.get('/api/health', (_req, res) => res.json({ ok: true, dbPath }));
 
-/* ---------- Static frontend ---------- */
-app.use(express.static(path.join(__dirname, 'frontend', 'dist')));
-app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'frontend', 'dist', 'index.html')));
+// =====================
+// Serve frontend build
+// =====================
+const distPath = path.join(__dirname, 'frontend', 'dist');
+app.use(express.static(distPath));
 
-/* ---------- Start ---------- */
+// SPA fallback
+app.get('*', (req, res) => {
+  res.sendFile(path.join(distPath, 'index.html'));
+});
+
+// =====================
+// Boot
+// =====================
 initDb()
-  .then(() => app.listen(PORT, () => console.log(`✅ Server on ${PORT}; DB at ${dbPath}`)))
-  .catch(err => { console.error('DB init failed:', err); process.exit(1); });
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`✅ Server running on ${PORT}; DB at ${dbPath}`);
+    });
+  })
+  .catch((err) => {
+    console.error('❌ DB init failed:', err);
+    process.exit(1);
+  });
