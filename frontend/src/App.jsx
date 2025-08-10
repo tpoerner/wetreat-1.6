@@ -21,11 +21,11 @@ export default function App() {
 
   return (
     <div>
-      <nav className="nav">
+      <nav className="bg-blue-800 text-white">
         <div className="max-w-5xl mx-auto flex items-center gap-3 p-3">
-          <button className="navbtn" onClick={() => setView('form')}>Patient Intake</button>
-          <button className="navbtn" onClick={() => admin ? setView('admin') : login()}>Admin Dashboard</button>
-          {admin && <button className="navbtn ml-auto" onClick={logout}>Logout</button>}
+          <button className="px-3 py-2 rounded-md bg-white text-blue-800 hover:bg-slate-100" onClick={() => setView('form')}>Patient Intake</button>
+          <button className="px-3 py-2 rounded-md bg-white text-blue-800 hover:bg-slate-100" onClick={() => admin ? setView('admin') : login()}>Admin Dashboard</button>
+          {admin && <button className="px-3 py-2 rounded-md bg-white text-blue-800 hover:bg-slate-100 ml-auto" onClick={logout}>Logout</button>}
         </div>
       </nav>
       <main className="max-w-5xl mx-auto p-4">
